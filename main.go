@@ -1,12 +1,25 @@
 package main
 
 import (
-	"fmt"
 	"github.com/gdamore/tcell/v2"
 	"log"
 	"os"
-	"strings"
+	"fmt"
 )
+
+func debugLog(v any) {
+	f, err := os.OpenFile("debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Printf("logToFile error: %v", err)
+		return
+	}
+	defer f.Close()
+
+	_, err = fmt.Fprintf(f,"%v\n", v)
+	if err != nil {
+		log.Printf("logToFile write error: %v", err)
+	}
+}
 
 // sig_winch for scaling
 
@@ -26,93 +39,67 @@ func drawText(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style, text string
 	}
 }
 
-func drawBox(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style, text string) {
-
-	if y2 < y1 {
-		y1, y2 = y2, y1
-	}
-	if x2 < x1 {
-		x1, x2 = x2, x1
-	}
+func buttons(key rune, _x, _y int, env *Env) {
+	if key == 'w' { env.player.postion.y -= 1 }
+	if key == 'a' { env.player.postion.x -= 1 }
+	if key == 's' { env.player.postion.y += 1 }
+	if key == 'd' { env.player.postion.x += 1 }
+}
+func drawBox(s tcell.Screen, position Vector2D, width int, height int, style tcell.Style) {
+	x2 := position.x + (width * 2) - 1 // times 2 because of the terminals taller pixels
+	y2 := position.y + height - 1
 
 	// Fill background
-	for row := y1; row <= y2; row++ {
-		for col := x1; col <= x2; col++ {
+	for row := position.y; row <= y2; row++ {
+		for col := position.x; col <= x2; col++ {
 			s.SetContent(col, row, ' ', nil, style)
 		}
 	}
-
-	// Draw borders
-	for col := x1; col <= x2; col++ {
-		s.SetContent(col, y1, tcell.RuneHLine, nil, style)
-		s.SetContent(col, y2, tcell.RuneHLine, nil, style)
-	}
-	for row := y1 + 1; row < y2; row++ {
-		s.SetContent(x1, row, tcell.RuneVLine, nil, style)
-		s.SetContent(x2, row, tcell.RuneVLine, nil, style)
-	}
-
-	// Only draw corners if necessary
-	if y1 != y2 && x1 != x2 {
-		s.SetContent(x1, y1, tcell.RuneULCorner, nil, style)
-		s.SetContent(x2, y1, tcell.RuneURCorner, nil, style)
-		s.SetContent(x1, y2, tcell.RuneLLCorner, nil, style)
-		s.SetContent(x2, y2, tcell.RuneLRCorner, nil, style)
-	}
-
-	drawText(s, x1+1, y1+1, x2-1, y2-1, style, text)
 }
 
-func editor(env Env) {
-	// Process event
-	switch ev := ev.(type) {
-	case *tcell.EventResize:
-		s.Sync()
-	case *tcell.EventKey:
-		if ev.Key() == tcell.KeyEscape || ev.Key() == tcell.KeyCtrlC {
-			return
-		} else if ev.Key() == tcell.KeyCtrlL {
-			s.Sync()
-		} else if ev.Rune() == 'C' || ev.Rune() == 'c' {
-			s.Clear()
-		}
-	case *tcell.EventMouse:
-		x, y := ev.Position()
-
-		switch ev.Buttons() {
-		case tcell.Button1, tcell.Button2:
-			if env.ox < 0 {
-				env.ox, env.oy = x, y // record location when click started
-			}
-
-		case tcell.ButtonNone:
-			if env.ox >= 0 {
-				label := fmt.Sprintf("%d,%d to %d,%d", env.ox, env.oy, x, y)
-				drawBox(s, env.ox, env.oy, x, y, boxStyle, label)
-				env.ox, env.oy = -1, -1
-			}
-		}
-	}
+type Vector2D struct {
+	x int
+	y int
 }
-func game(env Env) {
+type Player struct {
+	postion Vector2D
 }
-
 type Env struct {
-	ox int
-	oy int
+	ox     int
+	oy     int
 	screen tcell.Screen
+	player Player
+}
+
+func drawPlayer(env Env) {
+	style := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorBlueViolet)
+	debugLog(env.player.postion)
+	drawBox(env.screen, env.player.postion, 1, 1, style)
+}
+func display(env Env) {
+	env.screen.Clear()
+	drawPlayer(env)
+
+	env.screen.Sync()
 }
 
 func main() {
 	defStyle := tcell.StyleDefault.Background(tcell.ColorReset).Foreground(tcell.ColorReset)
-	boxStyle := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorPurple)
 
-	// Event loop
-	env := Env {
-		ox: -1,
-		oy: -1,
+	player := Player{
+		postion: Vector2D{
+			x: 30,
+			y: 30,
+		},
 	}
-	// Initialize screen
+	// Event loop
+	env := Env{
+		ox:     -1,
+		oy:     -1,
+		player: player,
+	}
+
+	// Initialize screen target size 1024 by 512
 	s, err := tcell.NewScreen()
 	if err != nil {
 		log.Fatalf("%+v", err)
@@ -125,11 +112,6 @@ func main() {
 	s.EnableMouse()
 	s.EnablePaste()
 	s.Clear()
-
-	// Draw initial boxes
-	drawBox(s, 1, 1, 42, 7, boxStyle, "Click and drag to draw a box")
-	drawBox(s, 5, 9, 32, 14, boxStyle, "Press C to reset")
-
 
 	quit := func() {
 		// You have to catch panics in a defer, clean up, and
@@ -158,12 +140,21 @@ func main() {
 
 		// Poll event
 		ev := s.PollEvent()
-		is_debug := os.Getenv("DEBUG")
-		switch strings.ToLower(is_debug) {
-		case "true":
-			editor(env) 
-		case "false":
-			game(env) 
+		// Process event
+		switch ev := ev.(type) {
+		case *tcell.EventResize:
+			s.Sync()
+		case *tcell.EventKey:
+			if ev.Key() == tcell.KeyEscape || ev.Key() == tcell.KeyCtrlC {
+				return
+			} else if ev.Key() == tcell.KeyCtrlL {
+				s.Sync()
+			} else if ev.Rune() == 'C' || ev.Rune() == 'c' {
+				s.Clear()
+			} else {
+				buttons(ev.Rune(), 0, 0, &env)
+			}
 		}
+		display(env)
 	}
 }
