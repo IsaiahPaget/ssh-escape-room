@@ -1,11 +1,14 @@
 package main
 
 import (
+	"fmt"
+	"math"
 	"github.com/gdamore/tcell/v2"
 	"log"
 	"os"
-	"fmt"
 )
+
+const PI = 3.1415926535
 
 func debugLog(v any) {
 	f, err := os.OpenFile("debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -15,7 +18,7 @@ func debugLog(v any) {
 	}
 	defer f.Close()
 
-	_, err = fmt.Fprintf(f,"%v\n", v)
+	_, err = fmt.Fprintf(f, "%v\n", v)
 	if err != nil {
 		log.Printf("logToFile write error: %v", err)
 	}
@@ -40,12 +43,32 @@ func drawText(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style, text string
 }
 
 func buttons(key rune, _x, _y int, env *Env) {
-	if key == 'w' { env.player.postion.y -= 1 }
-	if key == 'a' { env.player.postion.x -= 1 }
-	if key == 's' { env.player.postion.y += 1 }
-	if key == 'd' { env.player.postion.x += 1 }
+	if key == 'e' {
+		env.player.postion.x += int(env.player.rotation.delta.x * 2)
+		env.player.postion.y += int(env.player.rotation.delta.y * 2)
+	}
+	if key == 's' {
+		env.player.rotation.angle -= 0.1
+		if env.player.rotation.angle < 0 {
+			env.player.rotation.angle += 2 * PI
+		}
+		env.player.rotation.delta.x = float32(math.Cos(float64(env.player.rotation.angle) * 5))
+		env.player.rotation.delta.y = float32(math.Sin(float64(env.player.rotation.angle) * 5))
+	}
+	if key == 'd' {
+		env.player.postion.x -= int(env.player.rotation.delta.x * 2)
+		env.player.postion.y -= int(env.player.rotation.delta.y * 2)
+	}
+	if key == 'f' {
+		env.player.rotation.angle += 0.1
+		if env.player.rotation.angle > 2 * PI {
+			env.player.rotation.angle -= 2 * PI
+		}
+		env.player.rotation.delta.x = float32(math.Cos(float64(env.player.rotation.angle) * 5))
+		env.player.rotation.delta.y = float32(math.Sin(float64(env.player.rotation.angle) * 5))
+	}
 }
-func drawBox(s tcell.Screen, position Vector2D, width int, height int, style tcell.Style) {
+func drawBox(s tcell.Screen, position Vector2DInt, width int, height int, style tcell.Style) {
 	x2 := position.x + (width * 2) - 1 // times 2 because of the terminals taller pixels
 	y2 := position.y + height - 1
 
@@ -57,29 +80,69 @@ func drawBox(s tcell.Screen, position Vector2D, width int, height int, style tce
 	}
 }
 
-type Vector2D struct {
+type Map struct {
+	width        int
+	height       int
+	block_width  int
+	block_height int
+	area         int
+	level_data   []int
+}
+
+type Rotation struct {
+	delta Vector2DFloat32
+	angle float32
+}
+
+type Vector2DFloat32 struct {
+	x float32
+	y float32
+}
+type Vector2DInt struct {
 	x int
 	y int
 }
 type Player struct {
-	postion Vector2D
+	postion Vector2DInt
+	rotation Rotation
 }
 type Env struct {
-	ox     int
-	oy     int
-	screen tcell.Screen
-	player Player
+	ox       int
+	oy       int
+	screen   tcell.Screen
+	player   Player
+	game_map Map
 }
 
+func drawMap(env Env) {
+	wall_style := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorGreen)
+	floor_style := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorWhite)
+	map_width := env.game_map.width
+	map_height := env.game_map.height
+	map_block_width := env.game_map.block_width
+	map_block_height := env.game_map.block_height
+	map_level_data := env.game_map.level_data
+
+	for row := range map_width {
+		for col := range map_height {
+			block_style := floor_style
+
+			if map_level_data[row*map_width+col] == 1 {
+				block_style = wall_style
+			}
+
+			drawBox(env.screen, Vector2DInt{col * 2 * map_block_height, row * map_block_width}, map_block_width, map_block_height, block_style)
+		}
+	}
+}
 func drawPlayer(env Env) {
 	style := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorBlueViolet)
-	debugLog(env.player.postion)
 	drawBox(env.screen, env.player.postion, 1, 1, style)
 }
 func display(env Env) {
 	env.screen.Clear()
+	drawMap(env)
 	drawPlayer(env)
-
 	env.screen.Sync()
 }
 
@@ -87,16 +150,35 @@ func main() {
 	defStyle := tcell.StyleDefault.Background(tcell.ColorReset).Foreground(tcell.ColorReset)
 
 	player := Player{
-		postion: Vector2D{
+		postion: Vector2DInt{
 			x: 30,
 			y: 30,
 		},
 	}
+
+	game_map := Map{
+		width:  8,
+		height: 8,
+		area:   64,
+		level_data: []int{
+			1, 1, 1, 1, 1, 1, 1, 1,
+			1, 0, 0, 0, 0, 0, 0, 1,
+			1, 0, 1, 1, 1, 0, 0, 1,
+			1, 0, 1, 0, 1, 0, 0, 1,
+			1, 0, 1, 0, 1, 0, 0, 1,
+			1, 0, 0, 0, 0, 0, 0, 1,
+			1, 0, 0, 0, 0, 0, 0, 1,
+			1, 1, 1, 1, 1, 1, 1, 1,
+		},
+		block_width:  4,
+		block_height: 4,
+	}
 	// Event loop
 	env := Env{
-		ox:     -1,
-		oy:     -1,
-		player: player,
+		ox:       -1,
+		oy:       -1,
+		player:   player,
+		game_map: game_map,
 	}
 
 	// Initialize screen target size 1024 by 512
