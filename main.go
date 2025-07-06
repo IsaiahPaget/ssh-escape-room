@@ -2,13 +2,16 @@ package main
 
 import (
 	"fmt"
-	"math"
-	"github.com/gdamore/tcell/v2"
 	"log"
+	"math"
 	"os"
+
+	"github.com/gdamore/tcell/v2"
 )
 
 const PI = 3.1415926535
+const virtualWidth = 1024
+const virtualHeight = 512
 
 func debugLog(v any) {
 	f, err := os.OpenFile("debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -42,7 +45,10 @@ func drawText(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style, text string
 	}
 }
 
-func buttons(key rune, _x, _y int, env *Env) {
+// TODO: frame buffer that is 1024 x 512 this will solve flickering, and will allow the rendering
+// to downscale to the size of a terminal but while allowing the game math to be more like a normal game
+
+func player_actions(key rune, env *Env) {
 	if key == 'e' {
 		env.player.postion.x += int(env.player.rotation.delta.x * 2)
 		env.player.postion.y += int(env.player.rotation.delta.y * 2)
@@ -61,21 +67,24 @@ func buttons(key rune, _x, _y int, env *Env) {
 	}
 	if key == 'f' {
 		env.player.rotation.angle += 0.1
-		if env.player.rotation.angle > 2 * PI {
+		if env.player.rotation.angle > 2*PI {
 			env.player.rotation.angle -= 2 * PI
 		}
 		env.player.rotation.delta.x = float32(math.Cos(float64(env.player.rotation.angle) * 5))
 		env.player.rotation.delta.y = float32(math.Sin(float64(env.player.rotation.angle) * 5))
 	}
 }
-func drawBox(s tcell.Screen, position Vector2DInt, width int, height int, style tcell.Style) {
+func game_actions(key rune, _x, _y int, env *Env) {
+	player_actions(key, env)
+}
+func drawBox(s VirtualScreen, position Vector2DInt, width int, height int, style tcell.Style) {
 	x2 := position.x + (width * 2) - 1 // times 2 because of the terminals taller pixels
 	y2 := position.y + height - 1
 
 	// Fill background
 	for row := position.y; row <= y2; row++ {
 		for col := position.x; col <= x2; col++ {
-			s.SetContent(col, row, ' ', nil, style)
+			s.SetContent(col, row, style)
 		}
 	}
 }
@@ -103,15 +112,40 @@ type Vector2DInt struct {
 	y int
 }
 type Player struct {
-	postion Vector2DInt
+	postion  Vector2DInt
 	rotation Rotation
 }
+type VirtualScreen struct {
+	buffer []Pixel
+	width  int
+	height int
+}
+
+func (virtual_screen VirtualScreen) SetContent(x int, y int, style tcell.Style) {
+	virtual_screen.buffer[y*virtual_screen.width+x] = Pixel{
+		style: style,
+	}
+}
+
+const (
+	EntityTypePlayer = "player_type"
+)
+
+type Entity struct {
+	entity_type int
+}
+
 type Env struct {
 	ox       int
 	oy       int
-	screen   tcell.Screen
+	v_screen VirtualScreen
+	t_screen tcell.Screen
 	player   Player
 	game_map Map
+}
+
+type Pixel struct {
+	style tcell.Style // Color, bold, etc.
 }
 
 func drawMap(env Env) {
@@ -131,19 +165,42 @@ func drawMap(env Env) {
 				block_style = wall_style
 			}
 
-			drawBox(env.screen, Vector2DInt{col * 2 * map_block_height, row * map_block_width}, map_block_width, map_block_height, block_style)
+			drawBox(env.v_screen, Vector2DInt{col * 2 * map_block_height, row * map_block_width}, map_block_width, map_block_height, block_style)
 		}
 	}
 }
 func drawPlayer(env Env) {
 	style := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorBlueViolet)
-	drawBox(env.screen, env.player.postion, 1, 1, style)
+	debug_style := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorRed)
+	drawBox(env.v_screen, env.player.postion, 2, 2, style)
+
+	drawBox(
+		env.v_screen,
+		Vector2DInt{
+			x: env.player.postion.x + int(env.player.rotation.delta.x)*5,
+			y: env.player.postion.y + int(env.player.rotation.delta.y)*5,
+		},
+		1,
+		1,
+		debug_style,
+	)
 }
+
+func renderBuffer(env Env) {
+	for row := range env.v_screen.width {
+		for col := range env.v_screen.height {
+			env.t_screen.SetContent(col, row, ' ', nil, env.v_screen.buffer[row*env.v_screen.width+col].style)
+		}
+	}
+}
+
 func display(env Env) {
-	env.screen.Clear()
+	env.t_screen.Clear()
 	drawMap(env)
 	drawPlayer(env)
-	env.screen.Sync()
+
+	renderBuffer(env)
+	env.t_screen.Sync()
 }
 
 func main() {
@@ -153,6 +210,12 @@ func main() {
 		postion: Vector2DInt{
 			x: 30,
 			y: 30,
+		},
+		rotation: Rotation{
+			delta: Vector2DFloat32{
+				x: .5,
+				y: .5,
+			},
 		},
 	}
 
@@ -173,34 +236,43 @@ func main() {
 		block_width:  4,
 		block_height: 4,
 	}
+	// Initialize screen target size 1024 by 512
+	t_screen, err := tcell.NewScreen()
+	if err != nil {
+		log.Fatalf("%+v", err)
+	}
+	if err := t_screen.Init(); err != nil {
+		log.Fatalf("%+v", err)
+	}
+
+	xmax, ymax := t_screen.Size()
+	virtual_screen := VirtualScreen{
+		buffer: make([]Pixel, virtualWidth*virtualHeight),
+		width:  xmax,
+		height: ymax,
+	}
+
 	// Event loop
 	env := Env{
 		ox:       -1,
 		oy:       -1,
 		player:   player,
 		game_map: game_map,
+		v_screen: virtual_screen,
+		t_screen: t_screen,
 	}
 
-	// Initialize screen target size 1024 by 512
-	s, err := tcell.NewScreen()
-	if err != nil {
-		log.Fatalf("%+v", err)
-	}
-	if err := s.Init(); err != nil {
-		log.Fatalf("%+v", err)
-	}
-	env.screen = s
-	s.SetStyle(defStyle)
-	s.EnableMouse()
-	s.EnablePaste()
-	s.Clear()
+	env.t_screen.SetStyle(defStyle)
+	env.t_screen.EnableMouse()
+	env.t_screen.EnablePaste()
+	env.t_screen.Clear()
 
 	quit := func() {
 		// You have to catch panics in a defer, clean up, and
 		// re-raise them - otherwise your application can
 		// die without leaving any diagnostic trace.
 		maybePanic := recover()
-		s.Fini()
+		env.t_screen.Fini()
 		if maybePanic != nil {
 			panic(maybePanic)
 		}
@@ -208,7 +280,6 @@ func main() {
 	defer quit()
 
 	// Here's how to get the screen size when you need it.
-	// xmax, ymax := s.Size()
 
 	// Here's an example of how to inject a keystroke where it will
 	// be picked up by the next PollEvent call.  Note that the
@@ -218,23 +289,23 @@ func main() {
 
 	for {
 		// Update screen
-		s.Show()
+		env.t_screen.Show()
 
 		// Poll event
-		ev := s.PollEvent()
+		ev := env.t_screen.PollEvent()
 		// Process event
 		switch ev := ev.(type) {
 		case *tcell.EventResize:
-			s.Sync()
+			env.t_screen.Sync()
 		case *tcell.EventKey:
 			if ev.Key() == tcell.KeyEscape || ev.Key() == tcell.KeyCtrlC {
 				return
 			} else if ev.Key() == tcell.KeyCtrlL {
-				s.Sync()
+				env.t_screen.Sync()
 			} else if ev.Rune() == 'C' || ev.Rune() == 'c' {
-				s.Clear()
+				env.t_screen.Clear()
 			} else {
-				buttons(ev.Rune(), 0, 0, &env)
+				game_actions(ev.Rune(), 0, 0, &env)
 			}
 		}
 		display(env)
