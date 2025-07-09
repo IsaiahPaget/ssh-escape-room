@@ -3,24 +3,16 @@ package main
 import (
 	"errors"
 	"fmt"
+	"github.com/gdamore/tcell/v2"
+	"github.com/google/uuid"
 	"log"
 	"os"
-
-	"github.com/gdamore/tcell/v2"
 )
 
 const PI = 3.1415926535
-const virtualWidth = 1024
-const virtualHeight = 512
-
-type Map struct {
-	width        int
-	height       int
-	block_width  int
-	block_height int
-	area         int
-	level_data   []int
-}
+const VIRTUAL_WIDTH = 1024
+const VIRTUAL_HEIGHT = 512
+const MAX_ENTITIES = 2048
 
 type Rotation struct {
 	delta Vector2D
@@ -39,27 +31,32 @@ type VirtualScreen struct {
 }
 
 func (virtual_screen VirtualScreen) SetContent(x int, y int, style tcell.Style) {
-	virtual_screen.buffer[y*virtual_screen.width+x] = Pixel{
+	virtual_screen.buffer[GetFlatMapIndex(y, virtual_screen.width, x)] = Pixel{
 		style: style,
 	}
 }
 
 type Entity struct {
+	id          uuid.UUID
 	entity_type string
 	on_init     func()
 	on_update   func()
 	on_destroy  func()
+	on_draw     func()
 	postion     Vector2D
 	rotation    Rotation
+	width       int
+	height      int
+	// map stuff
+	block_width  int
+	block_height int
+	level_data   []int
 }
 
 type Environment struct {
-	ox         int
-	oy         int
 	v_screen   VirtualScreen
 	t_screen   tcell.Screen
 	entities   []Entity
-	game_map   Map
 	input_rune rune      // this is the charactor code like "w" as in wasd
 	input_key  tcell.Key // this can be used for ctrl+c and such
 }
@@ -80,10 +77,17 @@ func (env Environment) GetEntities(entityType string) ([]Entity, error) {
 	return entities, nil
 }
 
-func (env *Environment) AddEntity(entity Entity, init func(*Entity)) {
-	env.entities = append(env.entities, entity)
+func (env *Environment) CreateEntity(entity_type string, setup func(*Entity)) {
+	env.entities = append(env.entities, Entity{
+		id:          uuid.New(),
+		entity_type: entity_type,
+	})
 	idx := len(env.entities) - 1
-	init(&env.entities[idx])
+	if idx < 0 || idx > MAX_ENTITIES {
+		panic("Index out of bounds")
+	}
+	setup(&env.entities[idx])
+	env.entities[idx].on_init()
 }
 
 type Pixel struct {
@@ -137,34 +141,40 @@ func DrawBox(s VirtualScreen, position Vector2D, width int, height int, style tc
 	}
 }
 
-func DrawMap(env Environment) {
-	wall_style := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorGreen)
-	floor_style := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorWhite)
-	map_width := env.game_map.width
-	map_height := env.game_map.height
-	map_block_width := env.game_map.block_width
-	map_block_height := env.game_map.block_height
-	map_level_data := env.game_map.level_data
-
-	for row := range map_width {
-		for col := range map_height {
-			block_style := floor_style
-
-			if map_level_data[GetFlatMapIndex(row, map_width, col)] == 1 {
-				block_style = wall_style
-			}
-
-			position := Vector2D{
-				x: float32(col * 2 * map_block_height),
-				y: float32(row * map_block_width),
-			}
-
-			DrawBox(env.v_screen, position, map_block_width, map_block_height, block_style)
-		}
-	}
-}
+// func DrawMap(env Environment) {
+// 	wall_style := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorGreen)
+// 	floor_style := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorWhite)
+// 	map_width := env.game_map.width
+// 	map_height := env.game_map.height
+// 	map_block_width := env.game_map.block_width
+// 	map_block_height := env.game_map.block_height
+// 	map_level_data := env.game_map.level_data
+//
+// 	for row := range map_width {
+// 		for col := range map_height {
+// 			block_style := floor_style
+//
+// 			if map_level_data[GetFlatMapIndex(row, map_width, col)] == 1 {
+// 				block_style = wall_style
+// 			}
+//
+// 			position := Vector2D{
+// 				x: float32(col * 2 * map_block_height),
+// 				y: float32(row * map_block_width),
+// 			}
+//
+// 			DrawBox(env.v_screen, position, map_block_width, map_block_height, block_style)
+// 		}
+// 	}
+// }
 
 func GetFlatMapIndex(row, width, col int) int {
+	if row < 0 {
+		row = 0
+	}
+	if width < 0 {
+		width = 0
+	}
 	return row*width + col
 }
 
@@ -176,34 +186,29 @@ func RenderBuffer(env Environment) {
 	}
 }
 
+func DrawEntities(env Environment) {
+	for _, entity := range env.entities {
+		entity.on_draw()
+	}
+}
+
 func Display(env Environment) {
 	env.t_screen.Clear()
-	DrawMap(env)
-	DrawPlayer(env)
+	DrawEntities(env)
 
 	RenderBuffer(env)
 	env.t_screen.Sync()
 }
 
+func InitEntities(env *Environment) {
+	env.entities = []Entity{}
+	// The order of these function determines the 'z-index' of the stuff
+	InitGameMap(env)
+	InitPlayer(env)
+}
+
 func InitGame(env *Environment) {
 
-	game_map := Map{
-		width:  8,
-		height: 8,
-		area:   64,
-		level_data: []int{
-			1, 1, 1, 1, 1, 1, 1, 1,
-			1, 0, 0, 0, 0, 0, 0, 1,
-			1, 0, 1, 1, 1, 0, 0, 1,
-			1, 0, 1, 0, 1, 0, 0, 1,
-			1, 0, 1, 0, 1, 0, 0, 1,
-			1, 0, 0, 0, 0, 0, 0, 1,
-			1, 0, 0, 0, 0, 0, 0, 1,
-			1, 1, 1, 1, 1, 1, 1, 1,
-		},
-		block_width:  4,
-		block_height: 4,
-	}
 	// Initialize screen
 	t_screen, err := tcell.NewScreen()
 	if err != nil {
@@ -214,21 +219,16 @@ func InitGame(env *Environment) {
 	}
 
 	xmax, ymax := t_screen.Size()
-	DebugLog(xmax)
-	DebugLog(ymax)
 	virtual_screen := VirtualScreen{
-		buffer: make([]Pixel, virtualWidth*virtualHeight),
+		buffer: make([]Pixel, VIRTUAL_WIDTH*VIRTUAL_HEIGHT),
 		width:  xmax,
 		height: ymax,
 	}
 
-	env.ox = -1
-	env.oy = -1
-	env.entities = []Entity{}
-	InitPlayer(env)
-	env.game_map = game_map
 	env.v_screen = virtual_screen
 	env.t_screen = t_screen
+
+	InitEntities(env)
 
 	defStyle := tcell.StyleDefault.Background(tcell.ColorReset).Foreground(tcell.ColorReset)
 	env.t_screen.SetStyle(defStyle)
@@ -281,9 +281,9 @@ func main() {
 			} else {
 				env.input_rune = ev.Rune()
 				env.input_key = ev.Key()
-				GameActions(&env)
 			}
 		}
+		GameActions(&env)
 		Display(env)
 	}
 }
