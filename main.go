@@ -1,9 +1,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
-	"math"
 	"os"
 
 	"github.com/gdamore/tcell/v2"
@@ -13,7 +13,84 @@ const PI = 3.1415926535
 const virtualWidth = 1024
 const virtualHeight = 512
 
-func debugLog(v any) {
+type Map struct {
+	width        int
+	height       int
+	block_width  int
+	block_height int
+	area         int
+	level_data   []int
+}
+
+type Rotation struct {
+	delta Vector2D
+	angle float32
+}
+
+type Vector2D struct {
+	x float32
+	y float32
+}
+
+type VirtualScreen struct {
+	buffer []Pixel
+	width  int
+	height int
+}
+
+func (virtual_screen VirtualScreen) SetContent(x int, y int, style tcell.Style) {
+	virtual_screen.buffer[y*virtual_screen.width+x] = Pixel{
+		style: style,
+	}
+}
+
+type Entity struct {
+	entity_type string
+	on_init     func()
+	on_update   func()
+	on_destroy  func()
+	postion     Vector2D
+	rotation    Rotation
+}
+
+type Environment struct {
+	ox         int
+	oy         int
+	v_screen   VirtualScreen
+	t_screen   tcell.Screen
+	entities   []Entity
+	game_map   Map
+	input_rune rune      // this is the charactor code like "w" as in wasd
+	input_key  tcell.Key // this can be used for ctrl+c and such
+}
+
+func (env Environment) GetEntities(entityType string) ([]Entity, error) {
+	if entityType == "" {
+		return nil, errors.New("entityType cannot be empty")
+	}
+
+	entities := []Entity{}
+
+	for _, e := range env.entities {
+		if e.entity_type == entityType {
+			entities = append(entities, e)
+		}
+	}
+
+	return entities, nil
+}
+
+func (env *Environment) AddEntity(entity Entity, init func(*Entity)) {
+	env.entities = append(env.entities, entity)
+	idx := len(env.entities) - 1
+	init(&env.entities[idx])
+}
+
+type Pixel struct {
+	style tcell.Style // Color, bold, etc.
+}
+
+func DebugLog(v any) {
 	f, err := os.OpenFile("debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Printf("logToFile error: %v", err)
@@ -27,128 +104,40 @@ func debugLog(v any) {
 	}
 }
 
-// sig_winch for scaling
+// func DrawText(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style, text string) {
+// 	row := y1
+// 	col := x1
+// 	for _, r := range []rune(text) {
+// 		s.SetContent(col, row, r, nil, style)
+// 		col++
+// 		if col >= x2 {
+// 			row++
+// 			col = x1
+// 		}
+// 		if row > y2 {
+// 			break
+// 		}
+// 	}
+// }
 
-func drawText(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style, text string) {
-	row := y1
-	col := x1
-	for _, r := range []rune(text) {
-		s.SetContent(col, row, r, nil, style)
-		col++
-		if col >= x2 {
-			row++
-			col = x1
-		}
-		if row > y2 {
-			break
-		}
+func GameActions(env *Environment) {
+	for _, entity := range env.entities {
+		entity.on_update()
 	}
 }
-
-// TODO: frame buffer that is 1024 x 512 this will solve flickering, and will allow the rendering
-// to downscale to the size of a terminal but while allowing the game math to be more like a normal game
-
-func player_actions(key rune, env *Env) {
-	if key == 'e' {
-		env.player.postion.x += int(env.player.rotation.delta.x * 2)
-		env.player.postion.y += int(env.player.rotation.delta.y * 2)
-	}
-	if key == 's' {
-		env.player.rotation.angle -= 0.1
-		if env.player.rotation.angle < 0 {
-			env.player.rotation.angle += 2 * PI
-		}
-		env.player.rotation.delta.x = float32(math.Cos(float64(env.player.rotation.angle) * 5))
-		env.player.rotation.delta.y = float32(math.Sin(float64(env.player.rotation.angle) * 5))
-	}
-	if key == 'd' {
-		env.player.postion.x -= int(env.player.rotation.delta.x * 2)
-		env.player.postion.y -= int(env.player.rotation.delta.y * 2)
-	}
-	if key == 'f' {
-		env.player.rotation.angle += 0.1
-		if env.player.rotation.angle > 2*PI {
-			env.player.rotation.angle -= 2 * PI
-		}
-		env.player.rotation.delta.x = float32(math.Cos(float64(env.player.rotation.angle) * 5))
-		env.player.rotation.delta.y = float32(math.Sin(float64(env.player.rotation.angle) * 5))
-	}
-}
-func game_actions(key rune, _x, _y int, env *Env) {
-	player_actions(key, env)
-}
-func drawBox(s VirtualScreen, position Vector2DInt, width int, height int, style tcell.Style) {
-	x2 := position.x + (width * 2) - 1 // times 2 because of the terminals taller pixels
-	y2 := position.y + height - 1
+func DrawBox(s VirtualScreen, position Vector2D, width int, height int, style tcell.Style) {
+	x2 := int(position.x) + (width * 2) - 1 // times 2 because of the terminals taller pixels
+	y2 := int(position.y) + height - 1
 
 	// Fill background
-	for row := position.y; row <= y2; row++ {
-		for col := position.x; col <= x2; col++ {
+	for row := int(position.y); row <= y2; row++ {
+		for col := int(position.x); col <= x2; col++ {
 			s.SetContent(col, row, style)
 		}
 	}
 }
 
-type Map struct {
-	width        int
-	height       int
-	block_width  int
-	block_height int
-	area         int
-	level_data   []int
-}
-
-type Rotation struct {
-	delta Vector2DFloat32
-	angle float32
-}
-
-type Vector2DFloat32 struct {
-	x float32
-	y float32
-}
-type Vector2DInt struct {
-	x int
-	y int
-}
-type Player struct {
-	postion  Vector2DInt
-	rotation Rotation
-}
-type VirtualScreen struct {
-	buffer []Pixel
-	width  int
-	height int
-}
-
-func (virtual_screen VirtualScreen) SetContent(x int, y int, style tcell.Style) {
-	virtual_screen.buffer[y*virtual_screen.width+x] = Pixel{
-		style: style,
-	}
-}
-
-const (
-	EntityTypePlayer = "player_type"
-)
-
-type Entity struct {
-	entity_type int
-}
-
-type Env struct {
-	ox       int
-	oy       int
-	v_screen VirtualScreen
-	t_screen tcell.Screen
-	player   Player
-	game_map Map
-}
-
-type Pixel struct {
-	style tcell.Style // Color, bold, etc.
-}
-
-func drawMap(env Env) {
+func DrawMap(env Environment) {
 	wall_style := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorGreen)
 	floor_style := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorWhite)
 	map_width := env.game_map.width
@@ -161,63 +150,42 @@ func drawMap(env Env) {
 		for col := range map_height {
 			block_style := floor_style
 
-			if map_level_data[row*map_width+col] == 1 {
+			if map_level_data[GetFlatMapIndex(row, map_width, col)] == 1 {
 				block_style = wall_style
 			}
 
-			drawBox(env.v_screen, Vector2DInt{col * 2 * map_block_height, row * map_block_width}, map_block_width, map_block_height, block_style)
+			position := Vector2D{
+				x: float32(col * 2 * map_block_height),
+				y: float32(row * map_block_width),
+			}
+
+			DrawBox(env.v_screen, position, map_block_width, map_block_height, block_style)
 		}
 	}
 }
-func drawPlayer(env Env) {
-	style := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorBlueViolet)
-	debug_style := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorRed)
-	drawBox(env.v_screen, env.player.postion, 2, 2, style)
 
-	drawBox(
-		env.v_screen,
-		Vector2DInt{
-			x: env.player.postion.x + int(env.player.rotation.delta.x)*5,
-			y: env.player.postion.y + int(env.player.rotation.delta.y)*5,
-		},
-		1,
-		1,
-		debug_style,
-	)
+func GetFlatMapIndex(row, width, col int) int {
+	return row*width + col
 }
 
-func renderBuffer(env Env) {
+func RenderBuffer(env Environment) {
 	for row := range env.v_screen.width {
 		for col := range env.v_screen.height {
-			env.t_screen.SetContent(col, row, ' ', nil, env.v_screen.buffer[row*env.v_screen.width+col].style)
+			env.t_screen.SetContent(col, row, ' ', nil, env.v_screen.buffer[GetFlatMapIndex(row, env.v_screen.width, col)].style)
 		}
 	}
 }
 
-func display(env Env) {
+func Display(env Environment) {
 	env.t_screen.Clear()
-	drawMap(env)
-	drawPlayer(env)
+	DrawMap(env)
+	DrawPlayer(env)
 
-	renderBuffer(env)
+	RenderBuffer(env)
 	env.t_screen.Sync()
 }
 
-func main() {
-	defStyle := tcell.StyleDefault.Background(tcell.ColorReset).Foreground(tcell.ColorReset)
-
-	player := Player{
-		postion: Vector2DInt{
-			x: 30,
-			y: 30,
-		},
-		rotation: Rotation{
-			delta: Vector2DFloat32{
-				x: .5,
-				y: .5,
-			},
-		},
-	}
+func InitGame(env *Environment) {
 
 	game_map := Map{
 		width:  8,
@@ -236,7 +204,7 @@ func main() {
 		block_width:  4,
 		block_height: 4,
 	}
-	// Initialize screen target size 1024 by 512
+	// Initialize screen
 	t_screen, err := tcell.NewScreen()
 	if err != nil {
 		log.Fatalf("%+v", err)
@@ -252,20 +220,26 @@ func main() {
 		height: ymax,
 	}
 
-	// Event loop
-	env := Env{
-		ox:       -1,
-		oy:       -1,
-		player:   player,
-		game_map: game_map,
-		v_screen: virtual_screen,
-		t_screen: t_screen,
-	}
+	env.ox = -1
+	env.oy = -1
+	env.entities = []Entity{}
+	InitPlayer(env)
+	env.game_map = game_map
+	env.v_screen = virtual_screen
+	env.t_screen = t_screen
 
+	defStyle := tcell.StyleDefault.Background(tcell.ColorReset).Foreground(tcell.ColorReset)
 	env.t_screen.SetStyle(defStyle)
 	env.t_screen.EnableMouse()
 	env.t_screen.EnablePaste()
 	env.t_screen.Clear()
+}
+
+func main() {
+	// Event loop
+	env := Environment{}
+
+	InitGame(&env)
 
 	quit := func() {
 		// You have to catch panics in a defer, clean up, and
@@ -278,8 +252,6 @@ func main() {
 		}
 	}
 	defer quit()
-
-	// Here's how to get the screen size when you need it.
 
 	// Here's an example of how to inject a keystroke where it will
 	// be picked up by the next PollEvent call.  Note that the
@@ -305,9 +277,11 @@ func main() {
 			} else if ev.Rune() == 'C' || ev.Rune() == 'c' {
 				env.t_screen.Clear()
 			} else {
-				game_actions(ev.Rune(), 0, 0, &env)
+				env.input_rune = ev.Rune()
+				env.input_key = ev.Key()
+				GameActions(&env)
 			}
 		}
-		display(env)
+		Display(env)
 	}
 }
