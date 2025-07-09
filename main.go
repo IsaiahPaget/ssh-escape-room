@@ -214,6 +214,8 @@ func InitGame(env *Environment) {
 	}
 
 	xmax, ymax := t_screen.Size()
+	DebugLog(xmax)
+	DebugLog(ymax)
 	virtual_screen := VirtualScreen{
 		buffer: make([]Pixel, virtualWidth*virtualHeight),
 		width:  xmax,
