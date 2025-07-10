@@ -130,8 +130,8 @@ func GameActions(env *Environment) {
 	}
 }
 func DrawBox(s VirtualScreen, position Vector2D, width int, height int, style tcell.Style) {
-	x2 := int(position.x) + (width * 2) - 1 // times 2 because of the terminals taller pixels
 	y2 := int(position.y) + height - 1
+	x2 := int(position.x) + (width * 2) - 1 // times 2 because of the terminals taller pixels
 
 	// Fill background
 	for row := int(position.y); row <= y2; row++ {
@@ -179,9 +179,37 @@ func GetFlatMapIndex(row, width, col int) int {
 }
 
 func RenderBuffer(env Environment) {
-	for row := range env.v_screen.width {
-		for col := range env.v_screen.height {
-			env.t_screen.SetContent(col, row, ' ', nil, env.v_screen.buffer[GetFlatMapIndex(row, env.v_screen.width, col)].style)
+	virtual := env.v_screen
+	screen := env.t_screen
+
+	screenWidth, screenHeight := screen.Size()
+	scaleX := float32(virtual.width) / float32(screenWidth)
+	scaleY := float32(virtual.height) / float32(screenHeight)
+
+	for y := range screenHeight {
+		for x := range screenWidth {
+			vx1 := int(float32(x) * scaleX)
+			vx2 := int(float32(x+1) * scaleX)
+			vy1 := int(float32(y) * scaleY)
+			vy2 := int(float32(y+1) * scaleY)
+
+			var chosen Pixel
+			found := false
+
+			for vy := vy1; vy <= vy2; vy++ {
+				for vx := vx1; vx <= vx2; vx++ {
+					idx := GetFlatMapIndex(vy, virtual.width, vx)
+					if idx >= 0 && idx < len(virtual.buffer) {
+						p := virtual.buffer[idx]
+						if !found && p.style != tcell.StyleDefault {
+							chosen = p
+							found = true
+						}
+					}
+				}
+			}
+
+			screen.SetContent(x, y, ' ', nil, chosen.style)
 		}
 	}
 }
@@ -218,12 +246,12 @@ func InitGame(env *Environment) {
 		log.Fatalf("%+v", err)
 	}
 
-	xmax, ymax := t_screen.Size()
 	virtual_screen := VirtualScreen{
-		buffer: make([]Pixel, VIRTUAL_WIDTH*VIRTUAL_HEIGHT),
-		width:  xmax,
-		height: ymax,
+		buffer: make([]Pixel, (VIRTUAL_WIDTH*VIRTUAL_HEIGHT) + 1),
+		width:  VIRTUAL_WIDTH,
+		height: VIRTUAL_HEIGHT,
 	}
+
 
 	env.v_screen = virtual_screen
 	env.t_screen = t_screen
@@ -270,6 +298,10 @@ func main() {
 		// Process event
 		switch ev := ev.(type) {
 		case *tcell.EventResize:
+			xmax, ymax := env.t_screen.Size()
+			env.v_screen.width = xmax
+			env.v_screen.height = ymax
+
 			env.t_screen.Sync()
 		case *tcell.EventKey:
 			if ev.Key() == tcell.KeyEscape || ev.Key() == tcell.KeyCtrlC {

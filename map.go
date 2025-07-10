@@ -4,12 +4,12 @@ import (
 	"github.com/gdamore/tcell/v2"
 )
 
-const EntityTypeMap = "map_type"
+const ENTITY_TYPE_MAP = "map_type"
 
 func InitGameMap(env *Environment) {
 
 	env.CreateEntity(
-		EntityTypeMap,
+		ENTITY_TYPE_MAP,
 		func(game_map *Entity) {
 
 			game_map.on_init = func() {
@@ -25,8 +25,8 @@ func InitGameMap(env *Environment) {
 					1, 0, 0, 0, 0, 0, 0, 1,
 					1, 1, 1, 1, 1, 1, 1, 1,
 				}
-				game_map.block_width = 4
-				game_map.block_height = 4
+				game_map.block_width = 8
+				game_map.block_height = 8
 
 			}
 

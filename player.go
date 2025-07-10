@@ -1,16 +1,17 @@
 package main
 
 import (
-	"github.com/gdamore/tcell/v2"
 	"math"
+
+	"github.com/gdamore/tcell/v2"
 )
 
-const EntityTypePlayer = "player_type"
+const ENTITY_TYPE_PLAYER = "player_type"
 
 func InitPlayer(env *Environment) {
 
 	env.CreateEntity(
-		EntityTypePlayer,
+		ENTITY_TYPE_PLAYER,
 		func(player *Entity) {
 
 			player.on_init = func() {
@@ -49,6 +50,7 @@ func InitPlayer(env *Environment) {
 					player.rotation.delta.x = float32(math.Cos(float64(player.rotation.angle) * 5))
 					player.rotation.delta.y = float32(math.Sin(float64(player.rotation.angle) * 5))
 				}
+				DebugLog(player.postion)
 			}
 			player.on_draw = func() {
 				style := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorBlueViolet)
