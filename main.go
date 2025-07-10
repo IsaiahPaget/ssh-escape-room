@@ -3,10 +3,12 @@ package main
 import (
 	"errors"
 	"fmt"
+	"log"
+	"math"
+	"os"
+
 	"github.com/gdamore/tcell/v2"
 	"github.com/google/uuid"
-	"log"
-	"os"
 )
 
 const PI = 3.1415926535
@@ -56,6 +58,8 @@ type Entity struct {
 type Environment struct {
 	v_screen   VirtualScreen
 	t_screen   tcell.Screen
+	game_map   *Entity
+	player     *Entity
 	entities   []Entity
 	input_rune rune      // this is the charactor code like "w" as in wasd
 	input_key  tcell.Key // this can be used for ctrl+c and such
@@ -220,9 +224,104 @@ func DrawEntities(env Environment) {
 	}
 }
 
+func DrawRays3D(env Environment) {
+	player := env.player
+	ray_index := 0
+	map_intersect_x := 0
+	map_intersect_y := 0
+	map_position_index := 0
+	depth_of_field := 0
+	ray_position_x := 0.0
+	ray_position_y := 0.0
+	ray_angle := player.rotation.angle // just to start
+	x_offset := 0.0
+	y_offset := 0.0
+
+	for ray_index = 0; ray_index < 1; ray_index++ {
+		a_tan := -1 / math.Tan(float64(ray_angle))
+		if ray_angle > PI { // angle looking up
+			ray_position_y = float64(((int(player.postion.y) >> 6) << 6)) - float64(0.0001)
+			ray_position_x = (float64(player.postion.y) - ray_position_y*a_tan + float64(player.postion.x))
+			y_offset = -64
+			x_offset = -y_offset * a_tan
+		}
+		if ray_angle < PI { // angle looking down
+			ray_position_y = float64(((int(player.postion.y) >> 6) << 6)) + float64(64)
+			ray_position_x = (float64(player.postion.y) - ray_position_y*a_tan + float64(player.postion.x))
+			y_offset = 64
+			x_offset = -y_offset * a_tan
+		}
+		if ray_angle == 0 || ray_angle == PI { // looking to the left or right
+			ray_position_x = float64(player.postion.x)
+			ray_position_y = float64(player.postion.y)
+			depth_of_field = 8
+		}
+
+		for depth_of_field < 8 {
+			map_intersect_x = int(ray_position_x) >> 6
+			map_intersect_y = int(ray_position_y) >> 6
+			map_position_index = map_intersect_y*env.game_map.width + map_intersect_x
+			if map_position_index < env.game_map.width*env.game_map.height && env.game_map.level_data[map_position_index] == 1 {
+				depth_of_field = 8
+			} else {
+				ray_position_x += x_offset
+				ray_position_y += y_offset
+				depth_of_field += 1
+			}
+		}
+	}
+
+	start := player.postion
+	end := Vector2D{x: float32(ray_position_x), y: float32(ray_position_y)}
+	DrawLine(env.v_screen, start, end, tcell.StyleDefault.Foreground(tcell.ColorRed))
+
+}
+
+func DrawLine(screen VirtualScreen, start Vector2D, end Vector2D, style tcell.Style) {
+	x0 := int(start.x)
+	y0 := int(start.y)
+	x1 := int(end.x)
+	y1 := int(end.y)
+
+	dx := math.Abs(float64(x1 - x0))
+	sx := 1
+	if x0 > x1 {
+		sx = -1
+	}
+
+	dy := math.Abs(float64(y1 - y0))
+	sy := 1
+	if y0 > y1 {
+		sy = -1
+	}
+
+	err := dx + dy // error value
+
+	for {
+		if x0 >= 0 && x0 < screen.width && y0 >= 0 && y0 < screen.height {
+			screen.SetContent(x0, y0, style)
+		}
+
+		if x0 == x1 && y0 == y1 {
+			break
+		}
+
+		e2 := 2 * err
+		if e2 >= dy {
+			err += dy
+			x0 += sx
+		}
+		if e2 <= dx {
+			err += dx
+			y0 += sy
+		}
+	}
+}
+
 func Display(env Environment) {
 	env.t_screen.Clear()
 	DrawEntities(env)
+	DrawRays3D(env)
 
 	RenderBuffer(env)
 	env.t_screen.Sync()
@@ -247,11 +346,10 @@ func InitGame(env *Environment) {
 	}
 
 	virtual_screen := VirtualScreen{
-		buffer: make([]Pixel, (VIRTUAL_WIDTH*VIRTUAL_HEIGHT) + 1),
+		buffer: make([]Pixel, (VIRTUAL_WIDTH*VIRTUAL_HEIGHT)+1),
 		width:  VIRTUAL_WIDTH,
 		height: VIRTUAL_HEIGHT,
 	}
-
 
 	env.v_screen = virtual_screen
 	env.t_screen = t_screen

@@ -23,6 +23,7 @@ func InitPlayer(env *Environment) {
 					x: .5,
 					y: .5,
 				}
+				env.player = player
 			}
 
 			player.on_update = func() {
@@ -50,7 +51,6 @@ func InitPlayer(env *Environment) {
 					player.rotation.delta.x = float32(math.Cos(float64(player.rotation.angle) * 5))
 					player.rotation.delta.y = float32(math.Sin(float64(player.rotation.angle) * 5))
 				}
-				DebugLog(player.postion)
 			}
 			player.on_draw = func() {
 				style := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorBlueViolet)

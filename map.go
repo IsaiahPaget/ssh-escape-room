@@ -28,6 +28,8 @@ func InitGameMap(env *Environment) {
 				game_map.block_width = 8
 				game_map.block_height = 8
 
+				env.game_map = game_map
+
 			}
 
 			game_map.on_update = func() {
